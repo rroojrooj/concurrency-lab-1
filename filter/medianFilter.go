@@ -114,11 +114,30 @@ func filter(filepathIn, filepathOut string, threads int) {
 
 	immutableData := makeImmutableMatrix(getPixelData(img))
 	var newPixelData [][]uint8
-	
+
 	if threads == 1 {
 		newPixelData = medianFilter(0, height, 0, width, immutableData)
 	} else {
-		panic("TODO Implement me")
+		// Create an array of channels for the workers
+		channels := make([]chan [][]uint8, threads)
+
+		for i := range channels {
+			channels[i] = make(chan [][]uint8)
+		}
+
+		// Calculate the start and end y-coordinates for each worker
+		startYs, endYs := calculateImageChunks(height, threads)
+
+		// Start each worker with their respective image chunk boundaries
+		for i := 0; i < threads; i++ {
+			go worker(startYs[i], endYs[i], 0, width, immutableData, channels[i])
+		}
+
+		// Collect processed image chunks from the workers
+		for i := 0; i < threads; i++ {
+			part := <-channels[i]
+			newPixelData = append(newPixelData, part...)
+		}
 	}
 
 	imout := image.NewGray(image.Rect(0, 0, width, height))
@@ -127,6 +146,27 @@ func filter(filepathIn, filepathOut string, threads int) {
 	defer ofp.Close()
 	err := png.Encode(ofp, imout)
 	check(err)
+}
+
+func calculateImageChunks(totalImageHeight int, numberOfWorkers int) ([]int, []int) {
+	chunkHeight := totalImageHeight / numberOfWorkers
+
+	startBounds := make([]int, numberOfWorkers)
+	endBounds := make([]int, numberOfWorkers)
+
+	for i := 0; i < numberOfWorkers; i++ {
+		startBounds[i] = i * chunkHeight
+		endBounds[i] = (i + 1) * chunkHeight
+	}
+
+	return startBounds, endBounds
+}
+
+func worker(startY, endY, startX, endX int, data func(y, x int) uint8, out chan<- [][]uint8) {
+	// Execute the medianFilter()
+	x := medianFilter(startY, endY, startX, endX, data)
+	// send it out to channel
+	out <- x
 }
 
 // main reads in the filepath flags or sets them to default values and calls filter().
